@@ -1,1 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hexanaut Multiplayer Arena</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #1a1a1a;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+    #ui {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+      pointer-events: none;
+    }
+    h1 { margin: 0; font-size: 24px; color: #ffcc00; }
+    #leaderboard {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      min-width: 180px;
+    }
+  </style>
+</head>
+<body>
 
+  <div id="ui">
+    <h1>HEXANAUT ARENA</h1>
+    <p>Score: <span id="score">10</span></p>
+    <small>Tip: Cut through enemy tail paths to destroy them!</small>
+  </div>
+
+  <div id="leaderboard">
+    <h3 style="margin-top:0">Leaderboard</h3>
+    <div id="leaderList"></div>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let myId = null;
+    let players = {};
+    const mouse = { x: 0, y: 0 };
+    const MAP_SIZE = 2000;
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Track cursor movements relative to the center of your screen
+    window.addEventListener('mousemove', (e) => {
+      if (!myId || !players[myId]) return;
+      const me = players[myId];
+      
+      // Map screen coordinates back to actual in-game target positions
+      mouse.x = me.x + (e.clientX - canvas.width / 2);
+      mouse.y = me.y + (e.clientY - canvas.height / 2);
+    });
+
+    socket.on('init', (data) => {
+      myId = data.id;
+      players = data.players;
+      animate();
+    });
+
+    socket.on('heartbeat', (serverPlayers) => {
+      players = serverPlayers;
+      
+      // Tell the server your intended movement direction
+      if (myId && players[myId]) {
+        socket.emit('updateInput', mouse);
+        socket.emit('checkCollisions');
+        document.getElementById('score').innerText = players[myId].score;
+      }
+    });
+
+    socket.on('gameOver', () => {
+      alert('Game Over! Your trail line was cut!');
+      window.location.reload();
+    });
+
+    socket.on('playerLeft', (id) => {
+      delete players[id];
+    });
+
+    function drawGrid(camX, camY) {
+      ctx.strokeStyle = '#2a2a2a';
+      ctx.lineWidth = 1;
+      const step = 40; // Simulated hex-grid resolution block size
+
+      const startX = Math.max(0, camX - canvas.width / 2);
+      const endX = Math.min(MAP_SIZE, camX + canvas.width / 2);
+      const startY = Math.max(0, camY - canvas.height / 2);
+      const endY = Math.min(MAP_SIZE, camY + canvas.height / 2);
+
+      for (let x = startX - (startX % step); x < endX; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x - camX + canvas.width / 2, 0);
+        ctx.lineTo(x - camX + canvas.width / 2, canvas.height);
+        ctx.stroke();
+      }
+      for (let y = startY - (startY % step); y < endY; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y - camY + canvas.height / 2);
+        ctx.lineTo(canvas.width, y - camY + canvas.height / 2);
+        ctx.stroke();
+      }
+    }
+
+    function updateLeaderboard() {
+      const sorted = Object.values(players).sort((a, b) => b.score - a.score).slice(0, 5);
+      const list = document.getElementById('leaderList');
+      list.innerHTML = sorted.map((p, idx) => `
+        <div style="color: ${p.color}">
+          #${idx + 1}: ${p.id.substring(0, 5)} - <b>${p.score}</b>
+        </div>
+      `).join('');
+    }
+
+    function animate() {
+      if (!myId || !players[myId]) return requestAnimationFrame(animate);
+
+      const me = players[myId];
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Lock center tracking parameters to our active coordinates
+      const camX = me.x;
+      const camY = me.y;
+
+      drawGrid(camX, camY);
+      updateLeaderboard();
+
+      // Render players and their trailing trails
+      for (let id in players) {
+        const p = players[id];
+
+        // Process rendering offsets using camera positions
+        const screenX = p.x - camX + canvas.width / 2;
+        const screenY = p.y - camY + canvas.height / 2;
+
+        // Render the tail trailing behind the player
+        if (p.tail.length > 1) {
+          ctx.beginPath();
+          ctx.strokeStyle = p.color;
+          ctx.lineWidth = 6;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          
+          const firstPoint = p.tail[0];
+          ctx.moveTo(firstPoint.x - camX + canvas.width / 2, firstPoint.y - camY + canvas.height / 2);
+          
+          for (let i = 1; i < p.tail.length; i++) {
+            ctx.lineTo(p.tail[i].x - camX + canvas.width / 2, p.tail[i].y - camY + canvas.height / 2);
+          }
+          ctx.stroke();
+        }
+
+        // Render player body
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, 15, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      requestAnimationFrame(animate);
+    }
+  </script>
+</body>
+</html>
