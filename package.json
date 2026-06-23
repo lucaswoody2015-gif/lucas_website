@@ -1,2 +1,14 @@
-
-kjh
+{
+  "name": "hexanaut-multiplayer",
+  "version": "1.0.0",
+  "description": "Multiplayer Hexanaut.io clone using Canvas and WebSockets",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
